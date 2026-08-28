@@ -2,6 +2,9 @@ package com.impresa.pulizie
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.pdf.PdfDocument
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -9,6 +12,9 @@ import android.text.InputType
 import android.widget.*
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.FileProvider
+import java.io.File
+import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -24,8 +30,8 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var adapterSpinner: ArrayAdapter<String>
     private lateinit var adapterInterventi: ArrayAdapter<String>
-    private lateinit var txtDataOggi: TextView
     private lateinit var txtTimer: TextView
+    private lateinit var inputOperatori: EditText
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -41,34 +47,32 @@ class MainActivity : AppCompatActivity() {
             setPadding(32, 32, 32, 32)
         }
 
-        txtDataOggi = TextView(this).apply {
+        val txtDataOggi = TextView(this).apply {
             text = "📅 Data: $oggiStr"
             textSize = 18f
             setPadding(0, 0, 0, 16)
         }
 
-        // --- SEZIONE SELEZIONE E GESTIONE CLIENTE ---
-        val clienteLabel = TextView(this).apply { text = "Seleziona Cliente / Cantiere:" }
         val spinnerLayout = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        
         val spinnerClienti = Spinner(this).apply {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
         adapterSpinner = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, listaClienti)
         spinnerClienti.adapter = adapterSpinner
 
-        val btnAddCliente = Button(this).apply { text = "+ Nuovo" }
-        btnAddCliente.setOnClickListener {
-            mostraDialogNuovoCliente(pref)
-        }
+        val btnAddCliente = Button(this).apply { text = "+ Nuovo Cliente" }
+        btnAddCliente.setOnClickListener { mostraDialogNuovoCliente(pref) }
 
         spinnerLayout.addView(spinnerClienti)
         spinnerLayout.addView(btnAddCliente)
 
-        // --- SEZIONE NOTE E TIMER ---
-        val inputNote = EditText(this).apply {
-            hint = "Note / Mansioni svolte (opzionale)"
+        inputOperatori = EditText(this).apply {
+            hint = "Numero Operatori (Es. 2)"
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setText("1")
         }
+
+        val inputNote = EditText(this).apply { hint = "Note / Mansioni svolte" }
 
         txtTimer = TextView(this).apply {
             text = "⏱️ Tempo: 00:00:00"
@@ -83,15 +87,12 @@ class MainActivity : AppCompatActivity() {
         timerLayout.addView(btnStop)
 
         val btnSalva = Button(this).apply { text = "💾 Salva Intervento" }
-        val btnReportGiornaliero = Button(this).apply { 
-            text = "📤 Invia Report Quotidiano" 
-        }
+        val btnReportPdf = Button(this).apply { text = "📄 Genera e Invia PDF" }
 
         val listView = ListView(this)
         adapterInterventi = ArrayAdapter(this, android.R.layout.simple_list_item_1, interventiOggi)
         listView.adapter = adapterInterventi
 
-        // --- LOGICA TIMER ---
         runnable = object : Runnable {
             override fun run() {
                 if (isRunning) {
@@ -112,19 +113,17 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        btnStop.setOnClickListener {
-            isRunning = false
-        }
+        btnStop.setOnClickListener { isRunning = false }
 
-        // --- SALVATAGGIO INTERVENTO ---
         btnSalva.setOnClickListener {
-            val clienteSelezionato = spinnerClienti.selectedItem?.toString() ?: ""
+            val cliente = spinnerClienti.selectedItem?.toString() ?: ""
             val note = inputNote.text.toString()
+            val numOps = inputOperatori.text.toString().ifBlank { "1" }
             val tempoStr = txtTimer.text.toString().replace("⏱️ Tempo: ", "")
 
-            if (clienteSelezionato.isNotBlank()) {
-                val oraCorrente = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
-                val riga = "[$oraCorrente] $clienteSelezionato | Durata: $tempoStr\nNote: ${if (note.isBlank()) "Nessuna" else note}"
+            if (cliente.isNotBlank()) {
+                val ora = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
+                val riga = "[$ora] $cliente\nOperatori: $numOps | Durata: $tempoStr\nNote: ${if (note.isBlank()) "Nessuna" else note}"
                 
                 interventiOggi.add(0, riga)
                 adapterInterventi.notifyDataSetChanged()
@@ -134,55 +133,88 @@ class MainActivity : AppCompatActivity() {
                 isRunning = false
                 secondsElapsed = 0
                 txtTimer.text = "⏱️ Tempo: 00:00:00"
-                Toast.makeText(this, "Intervento registrato!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Intervento salvato!", Toast.LENGTH_SHORT).show()
             } else {
-                Toast.makeText(this, "Aggiungi prima un cliente dal tasto '+ Nuovo'", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Seleziona o aggiungi un cliente", Toast.LENGTH_SHORT).show()
             }
         }
 
-        // --- INVIO REPORT GIORNALIERO ---
-        btnReportGiornaliero.setOnClickListener {
+        btnReportPdf.setOnClickListener {
             if (interventiOggi.isNotEmpty()) {
-                val testoReport = StringBuilder()
-                testoReport.append("📋 REPORT PULIZIE DEL $oggiStr\n\n")
-                for (item in interventiOggi) {
-                    testoReport.append("• ").append(item).append("\n---\n")
-                }
-
-                val intent = Intent(Intent.ACTION_SEND).apply {
-                    type = "text/plain"
-                    putExtra(Intent.EXTRA_TEXT, testoReport.toString())
-                }
-                startActivity(Intent.createChooser(intent, "Invia Report Quotidiano via"))
+                generaEInviaPDF(oggiStr)
             } else {
-                Toast.makeText(this, "Nessun intervento registrato per oggi!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Nessun intervento registrato oggi!", Toast.LENGTH_SHORT).show()
             }
         }
 
-        // Costruzione Layout
         mainLayout.addView(txtDataOggi)
-        mainLayout.addView(clienteLabel)
         mainLayout.addView(spinnerLayout)
+        mainLayout.addView(inputOperatori)
         mainLayout.addView(inputNote)
         mainLayout.addView(txtTimer)
         mainLayout.addView(timerLayout)
         mainLayout.addView(btnSalva)
-        mainLayout.addView(btnReportGiornaliero)
+        mainLayout.addView(btnReportPdf)
         mainLayout.addView(listView)
 
         setContentView(mainLayout)
     }
 
+    private fun generaEInviaPDF(dataStr: String) {
+        val pdfDocument = PdfDocument()
+        val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create() // A4
+        val page = pdfDocument.startPage(pageInfo)
+        val canvas: Canvas = page.canvas
+        val paint = Paint()
+
+        // Titolo
+        paint.textSize = 20f
+        paint.isFakeBoldText = true
+        canvas.drawText("FAST & CLEAN - Impresa di Pulizia", 40f, 50f, paint)
+
+        paint.textSize = 14f
+        paint.isFakeBoldText = false
+        canvas.drawText("Report Interventi del: $dataStr", 40f, 80f, paint)
+        canvas.drawLine(40f, 95f, 555f, 95f, paint)
+
+        var y = 130f
+        paint.textSize = 12f
+
+        for (item in interventiOggi) {
+            val lines = item.split("\n")
+            for (line in lines) {
+                canvas.drawText(line, 40f, y, paint)
+                y += 20f
+            }
+            y += 10f
+            canvas.drawLine(40f, y, 555f, y, paint)
+            y += 20f
+        }
+
+        pdfDocument.finishPage(page)
+
+        val file = File(cacheDir, "Report_Pulizie_$dataStr.pdf")
+        try {
+            pdfDocument.writeTo(FileOutputStream(file))
+            pdfDocument.close()
+
+            val uri = FileProvider.getUriForFile(this, "$packageName.provider", file)
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "application/pdf"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(intent, "Condividi Report PDF"))
+        } catch (e: Exception) {
+            Toast.makeText(this, "Errore generazione PDF: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     private fun mostraDialogNuovoCliente(pref: android.content.SharedPreferences) {
         val builder = AlertDialog.Builder(this)
-        builder.setTitle("Nuovo Cliente / Cantiere")
-
-        val input = EditText(this).apply {
-            inputType = InputType.TYPE_CLASS_TEXT
-            hint = "Es. Condominio Rossi / Bar Roma"
-        }
+        builder.setTitle("Nuovo Cliente")
+        val input = EditText(this).apply { hint = "Es. Bar Roma" }
         builder.setView(input)
-
         builder.setPositiveButton("Salva") { _, _ ->
             val nome = input.text.toString().trim()
             if (nome.isNotBlank() && !listaClienti.contains(nome)) {
@@ -191,7 +223,7 @@ class MainActivity : AppCompatActivity() {
                 saveClienti(pref)
             }
         }
-        builder.setNegativeButton("Annulla") { dialog, _ -> dialog.cancel() }
+        builder.setNegativeButton("Annulla") { d, _ -> d.cancel() }
         builder.show()
     }
 
@@ -202,11 +234,7 @@ class MainActivity : AppCompatActivity() {
     private fun loadClienti(pref: android.content.SharedPreferences) {
         val set = pref.getStringSet("clienti_db", null)
         listaClienti.clear()
-        if (set != null) {
-            listaClienti.addAll(set)
-        } else {
-            listaClienti.addAll(listOf("Cliente Esempio A", "Cliente Esempio B"))
-        }
+        if (set != null) listaClienti.addAll(set) else listaClienti.add("Cliente Esempio")
     }
 
     private fun saveInterventiGiorno(pref: android.content.SharedPreferences, data: String) {
@@ -216,8 +244,6 @@ class MainActivity : AppCompatActivity() {
     private fun loadInterventiGiorno(pref: android.content.SharedPreferences, data: String) {
         val set = pref.getStringSet("interventi_$data", null)
         interventiOggi.clear()
-        if (set != null) {
-            interventiOggi.addAll(set)
-        }
+        if (set != null) interventiOggi.addAll(set)
     }
 }
