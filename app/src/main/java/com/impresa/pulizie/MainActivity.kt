@@ -8,7 +8,9 @@ import android.graphics.pdf.PdfDocument
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.Editable
 import android.text.InputType
+import android.text.TextWatcher
 import android.widget.*
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -23,7 +25,9 @@ class MainActivity : AppCompatActivity() {
     private val listaClienti = ArrayList<String>()
     private val interventiOggi = ArrayList<String>()
     
-    private var secondsElapsed = 0
+    // Gestione Cronometro basata su Timestamp
+    private var startTimeMillis: Long = 0
+    private var elapsedTimeBeforePause: Long = 0
     private var isRunning = false
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var runnable: Runnable
@@ -31,6 +35,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var adapterSpinner: ArrayAdapter<String>
     private lateinit var adapterInterventi: ArrayAdapter<String>
     private lateinit var txtTimer: TextView
+    private lateinit var txtOreUomo: TextView
     private lateinit var inputOperatori: EditText
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -60,14 +65,14 @@ class MainActivity : AppCompatActivity() {
         adapterSpinner = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, listaClienti)
         spinnerClienti.adapter = adapterSpinner
 
-        val btnAddCliente = Button(this).apply { text = "+ Nuovo Cliente" }
+        val btnAddCliente = Button(this).apply { text = "+ Nuovo" }
         btnAddCliente.setOnClickListener { mostraDialogNuovoCliente(pref) }
 
         spinnerLayout.addView(spinnerClienti)
         spinnerLayout.addView(btnAddCliente)
 
         inputOperatori = EditText(this).apply {
-            hint = "Numero Operatori (Es. 2)"
+            hint = "Numero Operatori"
             inputType = InputType.TYPE_CLASS_NUMBER
             setText("1")
         }
@@ -75,9 +80,15 @@ class MainActivity : AppCompatActivity() {
         val inputNote = EditText(this).apply { hint = "Note / Mansioni svolte" }
 
         txtTimer = TextView(this).apply {
-            text = "⏱️ Tempo: 00:00:00"
-            textSize = 20f
-            setPadding(0, 16, 0, 16)
+            text = "⏱️ Tempo Intervento: 00:00:00"
+            textSize = 18f
+            setPadding(0, 8, 0, 4)
+        }
+
+        txtOreUomo = TextView(this).apply {
+            text = "👥 Ore-Uomo Totali: 0,00 ore"
+            textSize = 18f
+            setPadding(0, 0, 0, 12)
         }
 
         val timerLayout = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -96,43 +107,60 @@ class MainActivity : AppCompatActivity() {
         runnable = object : Runnable {
             override fun run() {
                 if (isRunning) {
-                    secondsElapsed++
-                    val hrs = secondsElapsed / 3600
-                    val mins = (secondsElapsed % 3600) / 60
-                    val secs = secondsElapsed % 60
-                    txtTimer.text = String.format("⏱️ Tempo: %02d:%02d:%02d", hrs, mins, secs)
+                    aggiornaTimerEOreUomo()
                     handler.postDelayed(this, 1000)
                 }
             }
         }
 
+        inputOperatori.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                aggiornaTimerEOreUomo()
+            }
+            override fun afterTextChanged(s: Editable?) {}
+        })
+
         btnStart.setOnClickListener {
             if (!isRunning) {
                 isRunning = true
+                startTimeMillis = System.currentTimeMillis()
                 handler.post(runnable)
             }
         }
 
-        btnStop.setOnClickListener { isRunning = false }
+        btnStop.setOnClickListener {
+            if (isRunning) {
+                isRunning = false
+                elapsedTimeBeforePause += System.currentTimeMillis() - startTimeMillis
+                handler.removeCallbacks(runnable)
+                aggiornaTimerEOreUomo()
+            }
+        }
 
         btnSalva.setOnClickListener {
             val cliente = spinnerClienti.selectedItem?.toString() ?: ""
             val note = inputNote.text.toString()
             val numOps = inputOperatori.text.toString().ifBlank { "1" }
-            val tempoStr = txtTimer.text.toString().replace("⏱️ Tempo: ", "")
+            val tempoStr = txtTimer.text.toString().replace("⏱️ Tempo Intervento: ", "")
+            val oreUomoStr = txtOreUomo.text.toString().replace("👥 Ore-Uomo Totali: ", "")
 
             if (cliente.isNotBlank()) {
                 val ora = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
-                val riga = "[$ora] $cliente\nOperatori: $numOps | Durata: $tempoStr\nNote: ${if (note.isBlank()) "Nessuna" else note}"
+                val riga = "[$ora] $cliente\nOperatori: $numOps | Durata: $tempoStr | Ore-Uomo: $oreUomoStr\nNote: ${if (note.isBlank()) "Nessuna" else note}"
                 
                 interventiOggi.add(0, riga)
                 adapterInterventi.notifyDataSetChanged()
                 saveInterventiGiorno(pref, oggiStr)
 
+                // Reset
                 inputNote.text.clear()
                 isRunning = false
-                secondsElapsed = 0
-                txtTimer.text = "⏱️ Tempo: 00:00:00"
+                handler.removeCallbacks(runnable)
+                startTimeMillis = 0
+                elapsedTimeBeforePause = 0
+                txtTimer.text = "⏱️ Tempo Intervento: 00:00:00"
+                txtOreUomo.text = "👥 Ore-Uomo Totali: 0,00 ore"
                 Toast.makeText(this, "Intervento salvato!", Toast.LENGTH_SHORT).show()
             } else {
                 Toast.makeText(this, "Seleziona o aggiungi un cliente", Toast.LENGTH_SHORT).show()
@@ -152,6 +180,7 @@ class MainActivity : AppCompatActivity() {
         mainLayout.addView(inputOperatori)
         mainLayout.addView(inputNote)
         mainLayout.addView(txtTimer)
+        mainLayout.addView(txtOreUomo)
         mainLayout.addView(timerLayout)
         mainLayout.addView(btnSalva)
         mainLayout.addView(btnReportPdf)
@@ -160,14 +189,38 @@ class MainActivity : AppCompatActivity() {
         setContentView(mainLayout)
     }
 
+    private fun aggiornaTimerEOreUomo() {
+        val totalElapsed = if (isRunning) {
+            elapsedTimeBeforePause + (System.currentTimeMillis() - startTimeMillis)
+        } else {
+            elapsedTimeBeforePause
+        }
+
+        val seconds = totalElapsed / 1000
+        val hrs = seconds / 3600
+        val mins = (seconds % 3600) / 60
+        val secs = seconds % 60
+        txtTimer.text = String.format("⏱️ Tempo Intervento: %02d:%02d:%02d", hrs, mins, secs)
+
+        val numOps = inputOperatori.text.toString().toIntOrNull() ?: 1
+        val oreDecimali = (seconds.toDouble() / 3600.0) * numOps
+        txtOreUomo.text = String.format(Locale.ITALIAN, "👥 Ore-Uomo Totali: %.2f ore", oreDecimali)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (isRunning) {
+            handler.post(runnable)
+        }
+    }
+
     private fun generaEInviaPDF(dataStr: String) {
         val pdfDocument = PdfDocument()
-        val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create() // A4
+        val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create()
         val page = pdfDocument.startPage(pageInfo)
         val canvas: Canvas = page.canvas
         val paint = Paint()
 
-        // Titolo
         paint.textSize = 20f
         paint.isFakeBoldText = true
         canvas.drawText("FAST & CLEAN - Impresa di Pulizia", 40f, 50f, paint)
