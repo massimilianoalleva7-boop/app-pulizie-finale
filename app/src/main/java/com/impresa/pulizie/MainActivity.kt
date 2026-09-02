@@ -5,6 +5,7 @@ import android.content.Intent
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.pdf.PdfDocument
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -25,7 +26,6 @@ class MainActivity : AppCompatActivity() {
     private val listaClienti = ArrayList<String>()
     private val interventiOggi = ArrayList<String>()
     
-    // Gestione Cronometro basata su Timestamp
     private var startTimeMillis: Long = 0
     private var elapsedTimeBeforePause: Long = 0
     private var isRunning = false
@@ -46,6 +46,11 @@ class MainActivity : AppCompatActivity() {
 
         val oggiStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
         loadInterventiGiorno(pref, oggiStr)
+
+        // Ripristina stato timer se l'app è stata messa in pause
+        isRunning = pref.getBoolean("is_running", false)
+        startTimeMillis = pref.getLong("start_time", 0L)
+        elapsedTimeBeforePause = pref.getLong("elapsed_before_pause", 0L)
 
         val mainLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -125,6 +130,16 @@ class MainActivity : AppCompatActivity() {
             if (!isRunning) {
                 isRunning = true
                 startTimeMillis = System.currentTimeMillis()
+                salvaStatoTimer(pref)
+                
+                // Avvia servizio Foreground
+                val serviceIntent = Intent(this, TimerService::class.java)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(serviceIntent)
+                } else {
+                    startService(serviceIntent)
+                }
+
                 handler.post(runnable)
             }
         }
@@ -133,6 +148,11 @@ class MainActivity : AppCompatActivity() {
             if (isRunning) {
                 isRunning = false
                 elapsedTimeBeforePause += System.currentTimeMillis() - startTimeMillis
+                salvaStatoTimer(pref)
+
+                // Ferma servizio
+                stopService(Intent(this, TimerService::class.java))
+
                 handler.removeCallbacks(runnable)
                 aggiornaTimerEOreUomo()
             }
@@ -156,9 +176,12 @@ class MainActivity : AppCompatActivity() {
                 // Reset
                 inputNote.text.clear()
                 isRunning = false
+                stopService(Intent(this, TimerService::class.java))
                 handler.removeCallbacks(runnable)
                 startTimeMillis = 0
                 elapsedTimeBeforePause = 0
+                salvaStatoTimer(pref)
+
                 txtTimer.text = "⏱️ Tempo Intervento: 00:00:00"
                 txtOreUomo.text = "👥 Ore-Uomo Totali: 0,00 ore"
                 Toast.makeText(this, "Intervento salvato!", Toast.LENGTH_SHORT).show()
@@ -187,6 +210,18 @@ class MainActivity : AppCompatActivity() {
         mainLayout.addView(listView)
 
         setContentView(mainLayout)
+
+        if (isRunning) {
+            handler.post(runnable)
+        }
+    }
+
+    private fun salvaStatoTimer(pref: android.content.SharedPreferences) {
+        pref.edit()
+            .putBoolean("is_running", isRunning)
+            .putLong("start_time", startTimeMillis)
+            .putLong("elapsed_before_pause", elapsedTimeBeforePause)
+            .apply()
     }
 
     private fun aggiornaTimerEOreUomo() {
