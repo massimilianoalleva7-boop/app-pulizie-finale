@@ -13,6 +13,7 @@ import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
 import android.widget.*
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
@@ -47,10 +48,21 @@ class MainActivity : AppCompatActivity() {
         val oggiStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
         loadInterventiGiorno(pref, oggiStr)
 
-        // Ripristina stato timer se l'app è stata messa in pause
         isRunning = pref.getBoolean("is_running", false)
         startTimeMillis = pref.getLong("start_time", 0L)
         elapsedTimeBeforePause = pref.getLong("elapsed_before_pause", 0L)
+
+        // BLOCCO TASTO INDIETRO SE IL TIMER È IN CORSO
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (isRunning) {
+                    mostraDialogConfermaUscita()
+                } else {
+                    isEnabled = false
+                    onBackPressedDispatcher.onBackPressed()
+                }
+            }
+        })
 
         val mainLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -132,7 +144,6 @@ class MainActivity : AppCompatActivity() {
                 startTimeMillis = System.currentTimeMillis()
                 salvaStatoTimer(pref)
                 
-                // Avvia servizio Foreground
                 val serviceIntent = Intent(this, TimerService::class.java)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     startForegroundService(serviceIntent)
@@ -150,9 +161,7 @@ class MainActivity : AppCompatActivity() {
                 elapsedTimeBeforePause += System.currentTimeMillis() - startTimeMillis
                 salvaStatoTimer(pref)
 
-                // Ferma servizio
                 stopService(Intent(this, TimerService::class.java))
-
                 handler.removeCallbacks(runnable)
                 aggiornaTimerEOreUomo()
             }
@@ -214,6 +223,21 @@ class MainActivity : AppCompatActivity() {
         if (isRunning) {
             handler.post(runnable)
         }
+    }
+
+    private fun mostraDialogConfermaUscita() {
+        AlertDialog.Builder(this)
+            .setTitle("⚠️ Timer In Corso!")
+            .setMessage("C'è un intervento attivo. Sei sicuro di voler arrestare forzatamente il timer e uscire dall'app?")
+            .setPositiveButton("Sì, Ferma e Chiudi") { _, _ ->
+                val pref = getSharedPreferences("pulizie_app_db", Context.MODE_PRIVATE)
+                isRunning = false
+                salvaStatoTimer(pref)
+                stopService(Intent(this, TimerService::class.java))
+                finish()
+            }
+            .setNegativeButton("Annulla / Continua Timer", null)
+            .show()
     }
 
     private fun salvaStatoTimer(pref: android.content.SharedPreferences) {
