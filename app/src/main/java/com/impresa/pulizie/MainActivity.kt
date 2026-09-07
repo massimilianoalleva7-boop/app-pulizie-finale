@@ -2,18 +2,23 @@ package com.impresa.pulizie
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.pdf.PdfDocument
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.provider.MediaStore
 import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
 import android.widget.*
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
@@ -26,6 +31,8 @@ class MainActivity : AppCompatActivity() {
 
     private val listaClienti = ArrayList<String>()
     private val interventiOggi = ArrayList<String>()
+    private val fotoCorrenti = ArrayList<File>()
+    private val fotoInterventiMappa = HashMap<String, ArrayList<File>>() // Mappa foto per intervento
     
     private var startTimeMillis: Long = 0
     private var elapsedTimeBeforePause: Long = 0
@@ -39,6 +46,19 @@ class MainActivity : AppCompatActivity() {
     private lateinit var txtOreUomo: TextView
     private lateinit var inputOperatori: EditText
     private lateinit var spinnerClienti: Spinner
+    private lateinit var layoutFotoPreview: LinearLayout
+    private lateinit var txtFotoCount: TextView
+
+    private var tempFotoFile: File? = null
+
+    // Launcher per scattare la foto con la Fotocamera
+    private val cameraLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == RESULT_OK && tempFotoFile != null && tempFotoFile!!.exists()) {
+            fotoCorrenti.add(tempFotoFile!!)
+            aggiornaAnteprimaFoto()
+            Toast.makeText(this, "Foto aggiunta (${fotoCorrenti.size}/5)", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -102,6 +122,32 @@ class MainActivity : AppCompatActivity() {
 
         val inputNote = EditText(this).apply { hint = "Note / Mansioni svolte" }
 
+        // --- SEZIONE FOTO (MAX 5) ---
+        val photoHeaderLayout = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val btnScattaFoto = Button(this).apply { text = "📷 Scatta Foto" }
+        txtFotoCount = TextView(this).apply {
+            text = " Foto: 0/5"
+            textSize = 16f
+            setPadding(16, 0, 0, 0)
+        }
+        photoHeaderLayout.addView(btnScattaFoto)
+        photoHeaderLayout.addView(txtFotoCount)
+
+        btnScattaFoto.setOnClickListener {
+            if (fotoCorrenti.size >= 5) {
+                Toast.makeText(this, "Hai già raggiunto il limite massimo di 5 foto!", Toast.LENGTH_SHORT).show()
+            } else {
+                scattaFoto()
+            }
+        }
+
+        val scrollViewFoto = HorizontalScrollView(this)
+        layoutFotoPreview = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 8, 0, 8)
+        }
+        scrollViewFoto.addView(layoutFotoPreview)
+
         txtTimer = TextView(this).apply {
             text = "⏱️ Tempo Intervento: 00:00:00"
             textSize = 18f
@@ -127,7 +173,6 @@ class MainActivity : AppCompatActivity() {
         adapterInterventi = ArrayAdapter(this, android.R.layout.simple_list_item_1, interventiOggi)
         listView.adapter = adapterInterventi
 
-        // MODIFICA INTERVENTO SALVATO TAPPANDO SULLA LISTA
         listView.setOnItemClickListener { _, _, position, _ ->
             mostraDialogModificaIntervento(position, pref, oggiStr)
         }
@@ -196,14 +241,19 @@ class MainActivity : AppCompatActivity() {
 
             if (cliente.isNotBlank()) {
                 val ora = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
-                val riga = "[$ora] $cliente\nOperatori: $numOps | Durata: $tempoStr | Ore-Uomo: $oreUomoStr\nNote: ${if (note.isBlank()) "Nessuna" else note}"
+                val idIntervento = "INT_${System.currentTimeMillis()}"
+                val riga = "[$ora] $cliente\nOperatori: $numOps | Durata: $tempoStr | Ore-Uomo: $oreUomoStr | Foto: ${fotoCorrenti.size}\nNote: ${if (note.isBlank()) "Nessuna" else note}"
                 
                 interventiOggi.add(0, riga)
+                fotoInterventiMappa[riga] = ArrayList(fotoCorrenti)
+
                 adapterInterventi.notifyDataSetChanged()
                 saveInterventiGiorno(pref, oggiStr)
 
                 // Reset
                 inputNote.text.clear()
+                fotoCorrenti.clear()
+                aggiornaAnteprimaFoto()
                 isRunning = false
                 try {
                     stopService(Intent(this, TimerService::class.java))
@@ -235,6 +285,8 @@ class MainActivity : AppCompatActivity() {
         mainLayout.addView(spinnerLayout)
         mainLayout.addView(inputOperatori)
         mainLayout.addView(inputNote)
+        mainLayout.addView(photoHeaderLayout)
+        mainLayout.addView(scrollViewFoto)
         mainLayout.addView(txtTimer)
         mainLayout.addView(txtOreUomo)
         mainLayout.addView(timerLayout)
@@ -249,6 +301,49 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun scattaFoto() {
+        try {
+            val photoFile = File(cacheDir, "FOTO_${System.currentTimeMillis()}.jpg")
+            tempFotoFile = photoFile
+            val photoURI: Uri = FileProvider.getUriForFile(this, "$packageName.provider", photoFile)
+            val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
+                putExtra(MediaStore.EXTRA_OUTPUT, photoURI)
+            }
+            cameraLauncher.launch(intent)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Errore fotocamera: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun aggiornaAnteprimaFoto() {
+        layoutFotoPreview.removeAllViews()
+        txtFotoCount.text = " Foto: ${fotoCorrenti.size}/5"
+
+        for ((index, file) in fotoCorrenti.withIndex()) {
+            val imgView = ImageView(this).apply {
+                val bitmap = BitmapFactory.decodeFile(file.absolutePath)
+                setImageBitmap(bitmap)
+                layoutParams = LinearLayout.LayoutParams(150, 150).apply {
+                    setMargins(8, 0, 8, 0)
+                }
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                setOnClickListener {
+                    AlertDialog.Builder(this@MainActivity)
+                        .setTitle("Rimuovi Foto")
+                        .setMessage("Vuoi eliminare questa foto dall'intervento?")
+                        .setPositiveButton("Rimuovi") { _, _ ->
+                            fotoCorrenti.removeAt(index)
+                            file.delete()
+                            aggiornaAnteprimaFoto()
+                        }
+                        .setNegativeButton("Annulla", null)
+                        .show()
+                }
+            }
+            layoutFotoPreview.addView(imgView)
+        }
+    }
+
     private fun mostraDialogModificaCliente(pref: android.content.SharedPreferences) {
         val selectedIndex = spinnerClienti.selectedItemPosition
         if (selectedIndex >= 0 && selectedIndex < listaClienti.size) {
@@ -256,9 +351,7 @@ class MainActivity : AppCompatActivity() {
             val builder = AlertDialog.Builder(this)
             builder.setTitle("Modifica Anagrafica Cliente")
 
-            val input = EditText(this).apply {
-                setText(vecchioNome)
-            }
+            val input = EditText(this).apply { setText(vecchioNome) }
             builder.setView(input)
 
             builder.setPositiveButton("Salva Modifica") { _, _ ->
@@ -272,8 +365,6 @@ class MainActivity : AppCompatActivity() {
             }
             builder.setNegativeButton("Annulla", null)
             builder.show()
-        } else {
-            Toast.makeText(this, "Nessun cliente selezionato da modificare", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -285,35 +376,30 @@ class MainActivity : AppCompatActivity() {
             setPadding(32, 16, 32, 16)
         }
 
-        val lblCliente = TextView(this).apply { text = "Cliente:" }
         val editSpinnerCliente = Spinner(this)
-        val editAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, listaClienti)
-        editSpinnerCliente.adapter = editAdapter
+        editSpinnerCliente.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, listaClienti)
 
-        val lblOps = TextView(this).apply { text = "Numero Operatori:" }
         val editOps = EditText(this).apply {
             inputType = InputType.TYPE_CLASS_NUMBER
             setText(estraiValore(rigaCorrente, "Operatori: ", " |"))
         }
 
-        val lblDurata = TextView(this).apply { text = "Durata (HH:MM:SS):" }
         val editDurata = EditText(this).apply {
             setText(estraiValore(rigaCorrente, "Durata: ", " |"))
         }
 
-        val lblNote = TextView(this).apply { text = "Note:" }
         val editNote = EditText(this).apply {
             val noteParte = if (rigaCorrente.contains("\nNote: ")) rigaCorrente.substringAfter("\nNote: ") else ""
             setText(noteParte)
         }
 
-        layout.addView(lblCliente)
+        layout.addView(TextView(this).apply { text = "Cliente:" })
         layout.addView(editSpinnerCliente)
-        layout.addView(lblOps)
+        layout.addView(TextView(this).apply { text = "Numero Operatori:" })
         layout.addView(editOps)
-        layout.addView(lblDurata)
+        layout.addView(TextView(this).apply { text = "Durata (HH:MM:SS):" })
         layout.addView(editDurata)
-        layout.addView(lblNote)
+        layout.addView(TextView(this).apply { text = "Note:" })
         layout.addView(editNote)
 
         AlertDialog.Builder(this)
@@ -326,9 +412,15 @@ class MainActivity : AppCompatActivity() {
                 val noteNuove = editNote.text.toString()
 
                 val oreUomoCalcolate = calcolaOreUomoDecimali(durataNuova, numOpsNuovo.toIntOrNull() ?: 1)
+                val numFoto = fotoInterventiMappa[rigaCorrente]?.size ?: 0
                 
                 val oraPart = if (rigaCorrente.contains("] ")) rigaCorrente.substringBefore("] ") + "]" else "[00:00]"
-                val rigaAggiornata = "$oraPart $clienteNuovo\nOperatori: $numOpsNuovo | Durata: $durataNuova | Ore-Uomo: $oreUomoCalcolate ore\nNote: ${if (noteNuove.isBlank()) "Nessuna" else noteNuove}"
+                val rigaAggiornata = "$oraPart $clienteNuovo\nOperatori: $numOpsNuovo | Durata: $durataNuova | Ore-Uomo: $oreUomoCalcolate ore | Foto: $numFoto\nNote: ${if (noteNuove.isBlank()) "Nessuna" else noteNuove}"
+
+                val fotoSalvate = fotoInterventiMappa.remove(rigaCorrente)
+                if (fotoSalvate != null) {
+                    fotoInterventiMappa[rigaAggiornata] = fotoSalvate
+                }
 
                 interventiOggi[position] = rigaAggiornata
                 adapterInterventi.notifyDataSetChanged()
@@ -336,6 +428,8 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, "Intervento modificato!", Toast.LENGTH_SHORT).show()
             }
             .setNeutralButton("🗑️ Elimina") { _, _ ->
+                fotoInterventiMappa[rigaCorrente]?.forEach { it.delete() }
+                fotoInterventiMappa.remove(rigaCorrente)
                 interventiOggi.removeAt(position)
                 adapterInterventi.notifyDataSetChanged()
                 saveInterventiGiorno(pref, oggiStr)
@@ -418,7 +512,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun generaEInviaPDF(dataStr: String) {
         val pdfDocument = PdfDocument()
-        val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create()
+        val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create() // Pagina A4
         val page = pdfDocument.startPage(pageInfo)
         val canvas: Canvas = page.canvas
         val paint = Paint()
@@ -435,13 +529,39 @@ class MainActivity : AppCompatActivity() {
         var y = 130f
         paint.textSize = 12f
 
+        val fotoDaEliminare = ArrayList<File>()
+
         for (item in interventiOggi) {
             val lines = item.split("\n")
             for (line in lines) {
                 canvas.drawText(line, 40f, y, paint)
                 y += 20f
             }
-            y += 10f
+
+            // Disegno delle foto nel PDF
+            val listaFoto = fotoInterventiMappa[item]
+            if (!listaFoto.isNullOrEmpty()) {
+                var xFoto = 40f
+                for (fotoFile in listaFoto) {
+                    if (fotoFile.exists()) {
+                        fotoDaEliminare.add(fotoFile)
+                        val bitmap = BitmapFactory.decodeFile(fotoFile.absolutePath)
+                        if (bitmap != null) {
+                            val scaledBitmap = Bitmap.createScaledBitmap(bitmap, 80, 80, false)
+                            canvas.drawBitmap(scaledBitmap, xFoto, y, paint)
+                            xFoto += 90f
+                            if (xFoto > 480f) { // Nuova riga per le foto
+                                xFoto = 40f
+                                y += 90f
+                            }
+                        }
+                    }
+                }
+                y += 95f
+            } else {
+                y += 10f
+            }
+
             canvas.drawLine(40f, y, 555f, y, paint)
             y += 20f
         }
@@ -460,6 +580,15 @@ class MainActivity : AppCompatActivity() {
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             startActivity(Intent.createChooser(intent, "Condividi Report PDF"))
+
+            // Pulizia automatica delle foto dal dispositivo dopo l'invio del report
+            Handler(Looper.getMainLooper()).postDelayed({
+                for (f in fotoDaEliminare) {
+                    if (f.exists()) f.delete()
+                }
+                fotoInterventiMappa.clear()
+            }, 5000)
+
         } catch (e: Exception) {
             Toast.makeText(this, "Errore generazione PDF: ${e.message}", Toast.LENGTH_SHORT).show()
         }
