@@ -38,6 +38,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var txtTimer: TextView
     private lateinit var txtOreUomo: TextView
     private lateinit var inputOperatori: EditText
+    private lateinit var spinnerClienti: Spinner
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -75,8 +76,9 @@ class MainActivity : AppCompatActivity() {
             setPadding(0, 0, 0, 16)
         }
 
+        // --- GESTIONE ANAGRAFICA CLIENTI ---
         val spinnerLayout = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val spinnerClienti = Spinner(this).apply {
+        spinnerClienti = Spinner(this).apply {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
         adapterSpinner = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, listaClienti)
@@ -85,8 +87,12 @@ class MainActivity : AppCompatActivity() {
         val btnAddCliente = Button(this).apply { text = "+ Nuovo" }
         btnAddCliente.setOnClickListener { mostraDialogNuovoCliente(pref) }
 
+        val btnEditCliente = Button(this).apply { text = "✏️ Modifica" }
+        btnEditCliente.setOnClickListener { mostraDialogModificaCliente(pref) }
+
         spinnerLayout.addView(spinnerClienti)
         spinnerLayout.addView(btnAddCliente)
+        spinnerLayout.addView(btnEditCliente)
 
         inputOperatori = EditText(this).apply {
             hint = "Numero Operatori"
@@ -121,6 +127,11 @@ class MainActivity : AppCompatActivity() {
         adapterInterventi = ArrayAdapter(this, android.R.layout.simple_list_item_1, interventiOggi)
         listView.adapter = adapterInterventi
 
+        // MODIFICA INTERVENTO SALVATO TAPPANDO SULLA LISTA
+        listView.setOnItemClickListener { _, _, position, _ ->
+            mostraDialogModificaIntervento(position, pref, oggiStr)
+        }
+
         runnable = object : Runnable {
             override fun run() {
                 if (isRunning) {
@@ -144,11 +155,15 @@ class MainActivity : AppCompatActivity() {
                 startTimeMillis = System.currentTimeMillis()
                 salvaStatoTimer(pref)
                 
-                val serviceIntent = Intent(this, TimerService::class.java)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    startForegroundService(serviceIntent)
-                } else {
-                    startService(serviceIntent)
+                try {
+                    val serviceIntent = Intent(this, TimerService::class.java)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        startForegroundService(serviceIntent)
+                    } else {
+                        startService(serviceIntent)
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
                 }
 
                 handler.post(runnable)
@@ -161,7 +176,12 @@ class MainActivity : AppCompatActivity() {
                 elapsedTimeBeforePause += System.currentTimeMillis() - startTimeMillis
                 salvaStatoTimer(pref)
 
-                stopService(Intent(this, TimerService::class.java))
+                try {
+                    stopService(Intent(this, TimerService::class.java))
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+
                 handler.removeCallbacks(runnable)
                 aggiornaTimerEOreUomo()
             }
@@ -185,7 +205,11 @@ class MainActivity : AppCompatActivity() {
                 // Reset
                 inputNote.text.clear()
                 isRunning = false
-                stopService(Intent(this, TimerService::class.java))
+                try {
+                    stopService(Intent(this, TimerService::class.java))
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
                 handler.removeCallbacks(runnable)
                 startTimeMillis = 0
                 elapsedTimeBeforePause = 0
@@ -225,6 +249,121 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun mostraDialogModificaCliente(pref: android.content.SharedPreferences) {
+        val selectedIndex = spinnerClienti.selectedItemPosition
+        if (selectedIndex >= 0 && selectedIndex < listaClienti.size) {
+            val vecchioNome = listaClienti[selectedIndex]
+            val builder = AlertDialog.Builder(this)
+            builder.setTitle("Modifica Anagrafica Cliente")
+
+            val input = EditText(this).apply {
+                setText(vecchioNome)
+            }
+            builder.setView(input)
+
+            builder.setPositiveButton("Salva Modifica") { _, _ ->
+                val nuovoNome = input.text.toString().trim()
+                if (nuovoNome.isNotBlank()) {
+                    listaClienti[selectedIndex] = nuovoNome
+                    adapterSpinner.notifyDataSetChanged()
+                    saveClienti(pref)
+                    Toast.makeText(this, "Cliente aggiornato!", Toast.LENGTH_SHORT).show()
+                }
+            }
+            builder.setNegativeButton("Annulla", null)
+            builder.show()
+        } else {
+            Toast.makeText(this, "Nessun cliente selezionato da modificare", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun mostraDialogModificaIntervento(position: Int, pref: android.content.SharedPreferences, oggiStr: String) {
+        val rigaCorrente = interventiOggi[position]
+        
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(32, 16, 32, 16)
+        }
+
+        val lblCliente = TextView(this).apply { text = "Cliente:" }
+        val editSpinnerCliente = Spinner(this)
+        val editAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, listaClienti)
+        editSpinnerCliente.adapter = editAdapter
+
+        val lblOps = TextView(this).apply { text = "Numero Operatori:" }
+        val editOps = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setText(estraiValore(rigaCorrente, "Operatori: ", " |"))
+        }
+
+        val lblDurata = TextView(this).apply { text = "Durata (HH:MM:SS):" }
+        val editDurata = EditText(this).apply {
+            setText(estraiValore(rigaCorrente, "Durata: ", " |"))
+        }
+
+        val lblNote = TextView(this).apply { text = "Note:" }
+        val editNote = EditText(this).apply {
+            val noteParte = if (rigaCorrente.contains("\nNote: ")) rigaCorrente.substringAfter("\nNote: ") else ""
+            setText(noteParte)
+        }
+
+        layout.addView(lblCliente)
+        layout.addView(editSpinnerCliente)
+        layout.addView(lblOps)
+        layout.addView(editOps)
+        layout.addView(lblDurata)
+        layout.addView(editDurata)
+        layout.addView(lblNote)
+        layout.addView(editNote)
+
+        AlertDialog.Builder(this)
+            .setTitle("✏️ Modifica Intervento")
+            .setView(layout)
+            .setPositiveButton("Salva Modifiche") { _, _ ->
+                val clienteNuovo = editSpinnerCliente.selectedItem?.toString() ?: ""
+                val numOpsNuovo = editOps.text.toString().ifBlank { "1" }
+                val durataNuova = editDurata.text.toString().ifBlank { "00:00:00" }
+                val noteNuove = editNote.text.toString()
+
+                val oreUomoCalcolate = calcolaOreUomoDecimali(durataNuova, numOpsNuovo.toIntOrNull() ?: 1)
+                
+                val oraPart = if (rigaCorrente.contains("] ")) rigaCorrente.substringBefore("] ") + "]" else "[00:00]"
+                val rigaAggiornata = "$oraPart $clienteNuovo\nOperatori: $numOpsNuovo | Durata: $durataNuova | Ore-Uomo: $oreUomoCalcolate ore\nNote: ${if (noteNuove.isBlank()) "Nessuna" else noteNuove}"
+
+                interventiOggi[position] = rigaAggiornata
+                adapterInterventi.notifyDataSetChanged()
+                saveInterventiGiorno(pref, oggiStr)
+                Toast.makeText(this, "Intervento modificato!", Toast.LENGTH_SHORT).show()
+            }
+            .setNeutralButton("🗑️ Elimina") { _, _ ->
+                interventiOggi.removeAt(position)
+                adapterInterventi.notifyDataSetChanged()
+                saveInterventiGiorno(pref, oggiStr)
+                Toast.makeText(this, "Intervento eliminato", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Annulla", null)
+            .show()
+    }
+
+    private fun estraiValore(testo: String, prefisso: String, suffisso: String): String {
+        if (!testo.contains(prefisso)) return ""
+        val sub = testo.substringAfter(prefisso)
+        return if (sub.contains(suffisso)) sub.substringBefore(suffisso) else sub.substringBefore("\n")
+    }
+
+    private fun calcolaOreUomoDecimali(tempoHHMMSS: String, numOperatori: Int): String {
+        val parti = tempoHHMMSS.split(":")
+        var secTotali = 0L
+        if (parti.size == 3) {
+            val h = parti[0].toLongOrNull() ?: 0L
+            val m = parti[1].toLongOrNull() ?: 0L
+            val s = parti[2].toLongOrNull() ?: 0L
+            secTotali = h * 3600 + m * 60 + s
+        }
+        val oreDec = (secTotali.toDouble() / 3600.0) * numOperatori
+        return String.format(Locale.ITALIAN, "%.2f", oreDec)
+    }
+
     private fun mostraDialogConfermaUscita() {
         AlertDialog.Builder(this)
             .setTitle("⚠️ Timer In Corso!")
@@ -233,7 +372,11 @@ class MainActivity : AppCompatActivity() {
                 val pref = getSharedPreferences("pulizie_app_db", Context.MODE_PRIVATE)
                 isRunning = false
                 salvaStatoTimer(pref)
-                stopService(Intent(this, TimerService::class.java))
+                try {
+                    stopService(Intent(this, TimerService::class.java))
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
                 finish()
             }
             .setNegativeButton("Annulla / Continua Timer", null)
