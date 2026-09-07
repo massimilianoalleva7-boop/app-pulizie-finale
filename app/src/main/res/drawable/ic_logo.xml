@@ -14,7 +14,7 @@
         android:fillColor="#00A8E8"
         android:pathData="M54,18 A36,36 0 1,1 53.9,18 Z M54,26 A28,28 0 1,0 54.1,26 Z"/>
         
-    <!-- Icona Casa Bianco/Azzurra -->
+    <!-- Casa Bianco/Azzurra -->
     <path
         android:fillColor="#FFFFFF"
         android:pathData="M54,30 L30,50 L36,50 L36,74 L72,74 L72,50 L78,50 Z"/>
