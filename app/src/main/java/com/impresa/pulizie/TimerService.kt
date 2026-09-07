@@ -26,12 +26,16 @@ class TimerService : Service() {
 
         val notification = NotificationCompat.Builder(this, channelId)
             .setContentTitle("Fast & Clean - Intervento Attivo")
-            .setContentText("Il cronometro è in esecuzione in background...")
+            .setContentText("Il cronometro è attivo in background...")
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setOngoing(true)
             .build()
 
-        startForeground(1, notification)
+        try {
+            startForeground(1, notification)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
         return START_STICKY
     }
 
@@ -41,6 +45,10 @@ class TimerService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        stopForeground(STOP_FOREGROUND_REMOVE)
+        try {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 }
