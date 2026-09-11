@@ -32,11 +32,14 @@ class MainActivity : AppCompatActivity() {
     private val listaClienti = ArrayList<String>()
     private val interventiOggi = ArrayList<String>()
     private val fotoCorrenti = ArrayList<File>()
-    private val fotoInterventiMappa = HashMap<String, ArrayList<File>>() // Mappa foto per intervento
+    private val fotoInterventiMappa = HashMap<String, ArrayList<File>>()
     
     private var startTimeMillis: Long = 0
     private var elapsedTimeBeforePause: Long = 0
     private var isRunning = false
+    private var oraInizioStr = ""
+    private var oraFineStr = ""
+
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var runnable: Runnable
 
@@ -44,14 +47,15 @@ class MainActivity : AppCompatActivity() {
     private lateinit var adapterInterventi: ArrayAdapter<String>
     private lateinit var txtTimer: TextView
     private lateinit var txtOreUomo: TextView
+    private lateinit var txtOrari: TextView
     private lateinit var inputOperatori: EditText
+    private lateinit var inputNomeOperatoreApp: EditText
     private lateinit var spinnerClienti: Spinner
     private lateinit var layoutFotoPreview: LinearLayout
     private lateinit var txtFotoCount: TextView
 
     private var tempFotoFile: File? = null
 
-    // Launcher per scattare la foto con la Fotocamera
     private val cameraLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == RESULT_OK && tempFotoFile != null && tempFotoFile!!.exists()) {
             fotoCorrenti.add(tempFotoFile!!)
@@ -72,8 +76,9 @@ class MainActivity : AppCompatActivity() {
         isRunning = pref.getBoolean("is_running", false)
         startTimeMillis = pref.getLong("start_time", 0L)
         elapsedTimeBeforePause = pref.getLong("elapsed_before_pause", 0L)
+        oraInizioStr = pref.getString("ora_inizio", "") ?: ""
+        oraFineStr = pref.getString("ora_fine", "") ?: ""
 
-        // BLOCCO TASTO INDIETRO SE IL TIMER È IN CORSO
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 if (isRunning) {
@@ -93,8 +98,24 @@ class MainActivity : AppCompatActivity() {
         val txtDataOggi = TextView(this).apply {
             text = "📅 Data: $oggiStr"
             textSize = 18f
-            setPadding(0, 0, 0, 16)
+            setPadding(0, 0, 0, 12)
         }
+
+        // --- GESTIONE NOME OPERATORE PRINCIPALE APP ---
+        val operatoreLayout = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        inputNomeOperatoreApp = EditText(this).apply {
+            hint = "Nome Operatore (Es. Marco Rossi)"
+            setText(pref.getString("operatore_app_nome", ""))
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        val btnSalvaOperatore = Button(this).apply { text = "💾 Salva" }
+        btnSalvaOperatore.setOnClickListener {
+            val nome = inputNomeOperatoreApp.text.toString().trim()
+            pref.edit().putString("operatore_app_nome", nome).apply()
+            Toast.makeText(this, "Operatore salvato!", Toast.LENGTH_SHORT).show()
+        }
+        operatoreLayout.addView(inputNomeOperatoreApp)
+        operatoreLayout.addView(btnSalvaOperatore)
 
         // --- GESTIONE ANAGRAFICA CLIENTI ---
         val spinnerLayout = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -115,7 +136,7 @@ class MainActivity : AppCompatActivity() {
         spinnerLayout.addView(btnEditCliente)
 
         inputOperatori = EditText(this).apply {
-            hint = "Numero Operatori"
+            hint = "Numero Operatori Presenti"
             inputType = InputType.TYPE_CLASS_NUMBER
             setText("1")
         }
@@ -148,10 +169,16 @@ class MainActivity : AppCompatActivity() {
         }
         scrollViewFoto.addView(layoutFotoPreview)
 
+        txtOrari = TextView(this).apply {
+            text = "🕒 Inizio: ${oraInizioStr.ifBlank { "--:--" }} | Fine: ${oraFineStr.ifBlank { "--:--" }}"
+            textSize = 16f
+            setPadding(0, 8, 0, 4)
+        }
+
         txtTimer = TextView(this).apply {
             text = "⏱️ Tempo Intervento: 00:00:00"
             textSize = 18f
-            setPadding(0, 8, 0, 4)
+            setPadding(0, 4, 0, 4)
         }
 
         txtOreUomo = TextView(this).apply {
@@ -198,6 +225,10 @@ class MainActivity : AppCompatActivity() {
             if (!isRunning) {
                 isRunning = true
                 startTimeMillis = System.currentTimeMillis()
+                oraInizioStr = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+                oraFineStr = "--:--"
+                txtOrari.text = "🕒 Inizio: $oraInizioStr | Fine: $oraFineStr"
+
                 salvaStatoTimer(pref)
                 
                 try {
@@ -219,6 +250,9 @@ class MainActivity : AppCompatActivity() {
             if (isRunning) {
                 isRunning = false
                 elapsedTimeBeforePause += System.currentTimeMillis() - startTimeMillis
+                oraFineStr = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+                txtOrari.text = "🕒 Inizio: $oraInizioStr | Fine: $oraFineStr"
+
                 salvaStatoTimer(pref)
 
                 try {
@@ -238,11 +272,10 @@ class MainActivity : AppCompatActivity() {
             val numOps = inputOperatori.text.toString().ifBlank { "1" }
             val tempoStr = txtTimer.text.toString().replace("⏱️ Tempo Intervento: ", "")
             val oreUomoStr = txtOreUomo.text.toString().replace("👥 Ore-Uomo Totali: ", "")
+            val opNome = pref.getString("operatore_app_nome", "Non specificato") ?: "Non specificato"
 
             if (cliente.isNotBlank()) {
-                val ora = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
-                val idIntervento = "INT_${System.currentTimeMillis()}"
-                val riga = "[$ora] $cliente\nOperatori: $numOps | Durata: $tempoStr | Ore-Uomo: $oreUomoStr | Foto: ${fotoCorrenti.size}\nNote: ${if (note.isBlank()) "Nessuna" else note}"
+                val riga = "[$oraInizioStr - $oraFineStr] $cliente\nOp. Responsabile: $opNome | N° Ops: $numOps\nDurata: $tempoStr | Ore-Uomo: $oreUomoStr | Foto: ${fotoCorrenti.size}\nNote: ${if (note.isBlank()) "Nessuna" else note}"
                 
                 interventiOggi.add(0, riga)
                 fotoInterventiMappa[riga] = ArrayList(fotoCorrenti)
@@ -263,8 +296,11 @@ class MainActivity : AppCompatActivity() {
                 handler.removeCallbacks(runnable)
                 startTimeMillis = 0
                 elapsedTimeBeforePause = 0
+                oraInizioStr = ""
+                oraFineStr = ""
                 salvaStatoTimer(pref)
 
+                txtOrari.text = "🕒 Inizio: --:-- | Fine: --:--"
                 txtTimer.text = "⏱️ Tempo Intervento: 00:00:00"
                 txtOreUomo.text = "👥 Ore-Uomo Totali: 0,00 ore"
                 Toast.makeText(this, "Intervento salvato!", Toast.LENGTH_SHORT).show()
@@ -275,18 +311,20 @@ class MainActivity : AppCompatActivity() {
 
         btnReportPdf.setOnClickListener {
             if (interventiOggi.isNotEmpty()) {
-                generaEInviaPDF(oggiStr)
+                generaEInviaPDF(oggiStr, pref.getString("operatore_app_nome", "Non specificato") ?: "Non specificato")
             } else {
                 Toast.makeText(this, "Nessun intervento registrato oggi!", Toast.LENGTH_SHORT).show()
             }
         }
 
         mainLayout.addView(txtDataOggi)
+        mainLayout.addView(operatoreLayout)
         mainLayout.addView(spinnerLayout)
         mainLayout.addView(inputOperatori)
         mainLayout.addView(inputNote)
         mainLayout.addView(photoHeaderLayout)
         mainLayout.addView(scrollViewFoto)
+        mainLayout.addView(txtOrari)
         mainLayout.addView(txtTimer)
         mainLayout.addView(txtOreUomo)
         mainLayout.addView(timerLayout)
@@ -381,7 +419,7 @@ class MainActivity : AppCompatActivity() {
 
         val editOps = EditText(this).apply {
             inputType = InputType.TYPE_CLASS_NUMBER
-            setText(estraiValore(rigaCorrente, "Operatori: ", " |"))
+            setText(estraiValore(rigaCorrente, "N° Ops: ", "\n"))
         }
 
         val editDurata = EditText(this).apply {
@@ -413,9 +451,10 @@ class MainActivity : AppCompatActivity() {
 
                 val oreUomoCalcolate = calcolaOreUomoDecimali(durataNuova, numOpsNuovo.toIntOrNull() ?: 1)
                 val numFoto = fotoInterventiMappa[rigaCorrente]?.size ?: 0
+                val opNome = pref.getString("operatore_app_nome", "Non specificato") ?: "Non specificato"
                 
-                val oraPart = if (rigaCorrente.contains("] ")) rigaCorrente.substringBefore("] ") + "]" else "[00:00]"
-                val rigaAggiornata = "$oraPart $clienteNuovo\nOperatori: $numOpsNuovo | Durata: $durataNuova | Ore-Uomo: $oreUomoCalcolate ore | Foto: $numFoto\nNote: ${if (noteNuove.isBlank()) "Nessuna" else noteNuove}"
+                val orariPart = if (rigaCorrente.contains("] ")) rigaCorrente.substringBefore("] ") + "]" else "[--:--]"
+                val rigaAggiornata = "$orariPart $clienteNuovo\nOp. Responsabile: $opNome | N° Ops: $numOpsNuovo\nDurata: $durataNuova | Ore-Uomo: $oreUomoCalcolate ore | Foto: $numFoto\nNote: ${if (noteNuove.isBlank()) "Nessuna" else noteNuove}"
 
                 val fotoSalvate = fotoInterventiMappa.remove(rigaCorrente)
                 if (fotoSalvate != null) {
@@ -482,6 +521,8 @@ class MainActivity : AppCompatActivity() {
             .putBoolean("is_running", isRunning)
             .putLong("start_time", startTimeMillis)
             .putLong("elapsed_before_pause", elapsedTimeBeforePause)
+            .putString("ora_inizio", oraInizioStr)
+            .putString("ora_fine", oraFineStr)
             .apply()
     }
 
@@ -510,9 +551,9 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun generaEInviaPDF(dataStr: String) {
+    private fun generaEInviaPDF(dataStr: String, opResponsabile: String) {
         val pdfDocument = PdfDocument()
-        val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create() // Pagina A4
+        val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create()
         val page = pdfDocument.startPage(pageInfo)
         val canvas: Canvas = page.canvas
         val paint = Paint()
@@ -521,13 +562,13 @@ class MainActivity : AppCompatActivity() {
         paint.isFakeBoldText = true
         canvas.drawText("FAST & CLEAN - Impresa di Pulizia", 40f, 50f, paint)
 
-        paint.textSize = 14f
+        paint.textSize = 13f
         paint.isFakeBoldText = false
-        canvas.drawText("Report Interventi del: $dataStr", 40f, 80f, paint)
+        canvas.drawText("Report Interventi del: $dataStr | Resp: $opResponsabile", 40f, 80f, paint)
         canvas.drawLine(40f, 95f, 555f, 95f, paint)
 
         var y = 130f
-        paint.textSize = 12f
+        paint.textSize = 11f
 
         val fotoDaEliminare = ArrayList<File>()
 
@@ -535,10 +576,9 @@ class MainActivity : AppCompatActivity() {
             val lines = item.split("\n")
             for (line in lines) {
                 canvas.drawText(line, 40f, y, paint)
-                y += 20f
+                y += 18f
             }
 
-            // Disegno delle foto nel PDF
             val listaFoto = fotoInterventiMappa[item]
             if (!listaFoto.isNullOrEmpty()) {
                 var xFoto = 40f
@@ -550,7 +590,7 @@ class MainActivity : AppCompatActivity() {
                             val scaledBitmap = Bitmap.createScaledBitmap(bitmap, 80, 80, false)
                             canvas.drawBitmap(scaledBitmap, xFoto, y, paint)
                             xFoto += 90f
-                            if (xFoto > 480f) { // Nuova riga per le foto
+                            if (xFoto > 480f) {
                                 xFoto = 40f
                                 y += 90f
                             }
@@ -581,7 +621,6 @@ class MainActivity : AppCompatActivity() {
             }
             startActivity(Intent.createChooser(intent, "Condividi Report PDF"))
 
-            // Pulizia automatica delle foto dal dispositivo dopo l'invio del report
             Handler(Looper.getMainLooper()).postDelayed({
                 for (f in fotoDaEliminare) {
                     if (f.exists()) f.delete()
