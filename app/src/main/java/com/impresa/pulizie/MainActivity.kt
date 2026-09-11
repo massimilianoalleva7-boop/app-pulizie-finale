@@ -427,7 +427,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val editNote = EditText(this).apply {
-            val noteParte = if (rigaCorrente.contains("\nNote: ")) rigaCorrente.substringAfter("\nNote: ") else ""
+            val noteParte = if (rigaCorrente.contains("\nNote: ")) rigaCorrente.substringAfter("\nNote: ").substringBefore("\n⚠️") else ""
             setText(noteParte)
         }
 
@@ -454,7 +454,11 @@ class MainActivity : AppCompatActivity() {
                 val opNome = pref.getString("operatore_app_nome", "Non specificato") ?: "Non specificato"
                 
                 val orariPart = if (rigaCorrente.contains("] ")) rigaCorrente.substringBefore("] ") + "]" else "[--:--]"
-                val rigaAggiornata = "$orariPart $clienteNuovo\nOp. Responsabile: $opNome | N° Ops: $numOpsNuovo\nDurata: $durataNuova | Ore-Uomo: $oreUomoCalcolate ore | Foto: $numFoto\nNote: ${if (noteNuove.isBlank()) "Nessuna" else noteNuove}"
+                
+                // REGISTRAZIONE SILENZIOSA DELLA MODIFICA MANUALE
+                val notaModificaManuale = "\n⚠️ MODIFICATO MANUALMENTE DALL'OPERATORE"
+                
+                val rigaAggiornata = "$orariPart $clienteNuovo\nOp. Responsabile: $opNome | N° Ops: $numOpsNuovo\nDurata: $durataNuova | Ore-Uomo: $oreUomoCalcolate ore | Foto: $numFoto\nNote: ${if (noteNuove.isBlank()) "Nessuna" else noteNuove}$notaModificaManuale"
 
                 val fotoSalvate = fotoInterventiMappa.remove(rigaCorrente)
                 if (fotoSalvate != null) {
@@ -575,7 +579,13 @@ class MainActivity : AppCompatActivity() {
         for (item in interventiOggi) {
             val lines = item.split("\n")
             for (line in lines) {
-                canvas.drawText(line, 40f, y, paint)
+                if (line.contains("⚠️ MODIFICATO MANUALMENTE")) {
+                    paint.isFakeBoldText = true
+                    canvas.drawText(line, 40f, y, paint)
+                    paint.isFakeBoldText = false
+                } else {
+                    canvas.drawText(line, 40f, y, paint)
+                }
                 y += 18f
             }
 
